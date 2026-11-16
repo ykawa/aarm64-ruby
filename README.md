@@ -16,7 +16,7 @@ Artifactの保存期間は30日です。Releaseにはtar.xz、SHA256SUMS、公�
 ## インストール
 
 対象は **Ubuntu 26.04 ARM64** です。macOS、Windows、Alpine Linux向けのバイナリではありません。共有ライブラリを利用するため、単体の静的バイナリではありません。
-YJITは無効です。インストール先はビルド時に固定した`/opt/ruby/<version>`を使用してください。
+YJITを組み込んでビルドします。実行時は`ruby --yjit`または`RUBY_YJIT_ENABLE=1`で有効にできます（[Ruby公式YJITドキュメント](https://docs.ruby-lang.org/en/4.0/jit/yjit_md.html)）。インストール先はビルド時に固定した`/opt/ruby/<version>`を使用してください。
 
 Releaseからtar.xzとSHA256SUMSを同じディレクトリにダウンロードし、次を実行します。
 以下の`VERSION`はダウンロードしたバージョンに置き換えます。
@@ -29,7 +29,8 @@ sudo apt-get install -y libssl3t64 libyaml-0-2 zlib1g libreadline8t64 \
 sha256sum --check SHA256SUMS
 sudo tar -xJf "ruby-$VERSION-linux-arm64-ubuntu26.04.tar.xz" -C /
 export PATH="/opt/ruby/$VERSION/bin:$PATH"
-ruby --version
+ruby --yjit --version
+ruby --yjit -e 'p RubyVM::YJIT.enabled?'
 gem --version
 bundle --version
 ```
@@ -38,5 +39,5 @@ bundle --version
 
 ## 検証内容
 
-ソースのSHA-256照合、Rubyの`make test`、インストール後のARM64判定、OpenSSL / Psych / zlib / Readline / Fiddle / Socketの読み込み、RubyGemsとBundlerの起動をActions内で実施します。
+ソースのSHA-256照合、Rubyの`make test`、インストール後のARM64判定、OpenSSL / Psych / zlib / Readline / Fiddle / Socketの読み込み、RubyGemsとBundlerの起動、`ruby --yjit`でのYJIT有効化をActions内で確認します。
 `make test-all`による全テストは実行していません。
