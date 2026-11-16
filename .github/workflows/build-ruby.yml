@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y build-essential autoconf bison pkg-config \
             libssl-dev libyaml-dev zlib1g-dev libreadline-dev libffi-dev \
             libgdbm-dev libgdbm-compat-dev libgmp-dev libncurses-dev \
-            python3-yaml xz-utils
+            python3-yaml xz-utils rustc
       - name: Resolve source release
         id: source
         env:
@@ -61,7 +61,7 @@ jobs:
           echo "$(jq -r .sha256 source.json)  ruby.tar.xz" | sha256sum --check
           tar -xf ruby.tar.xz
           cd "ruby-$VERSION"
-          ./configure --prefix="/opt/ruby/$VERSION" --disable-install-doc --disable-yjit
+          ./configure --prefix="/opt/ruby/$VERSION" --disable-install-doc --enable-yjit
           make -j"$(nproc)"
           make test
           sudo make install
@@ -72,6 +72,7 @@ jobs:
             abort "TLS unavailable" unless OpenSSL::SSL::SSLContext.new
             puts "Native extensions loaded successfully"
           '
+          ruby --yjit -e 'abort "YJIT is disabled" unless RubyVM::YJIT.enabled?; puts "YJIT enabled"'
           gem --version
           bundle --version
       - name: Package distribution
@@ -116,4 +117,4 @@ jobs:
           fi
           gh release create "$tag" dist/* --target "$GITHUB_SHA" \
             --title "Ruby $VERSION — Linux ARM64 (Ubuntu 26.04)" \
-            --notes "Native ARM64 build. Install under /opt/ruby/$VERSION. Requires Ubuntu 26.04 ARM64 runtime libraries; see README. YJIT is disabled. Source metadata and SHA256SUMS are attached."
+            --notes "Native ARM64 build. Install under /opt/ruby/$VERSION. Requires Ubuntu 26.04 ARM64 runtime libraries; see README. YJIT support is included; enable at runtime with --yjit or RUBY_YJIT_ENABLE=1. Source metadata and SHA256SUMS are attached."
