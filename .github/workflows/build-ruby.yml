@@ -1,0 +1,117 @@
+name: Build ARM64 Ruby
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ruby_version:
+        description: Stable Ruby version (latest or e.g. 4.0.9)
+        default: latest
+        required: true
+        type: string
+      publish:
+        description: Publish a GitHub Release after building
+        default: false
+        type: boolean
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ruby-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf bison pkg-config \
+            libssl-dev libyaml-dev zlib1g-dev libreadline-dev libffi-dev \
+            libgdbm-dev libgdbm-compat-dev libgmp-dev libncurses-dev \
+            python3-yaml xz-utils
+      - name: Resolve source release
+        id: source
+        env:
+          RUBY_VERSION: ${{ inputs.ruby_version || 'latest' }}
+        run: |
+          python3 scripts/resolve-ruby.py "$RUBY_VERSION" > source.json
+          echo "version=$(jq -r .version source.json)" >> "$GITHUB_OUTPUT"
+      - name: Compile and test
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          test "$(uname -m)" = aarch64
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 26.04
+          curl --fail --location --retry 3 "$(jq -r .url source.json)" -o ruby.tar.xz
+          echo "$(jq -r .sha256 source.json)  ruby.tar.xz" | sha256sum --check
+          tar -xf ruby.tar.xz
+          cd "ruby-$VERSION"
+          ./configure --prefix="/opt/ruby/$VERSION" --disable-install-doc --disable-yjit
+          make -j"$(nproc)"
+          make test
+          sudo make install
+          export PATH="/opt/ruby/$VERSION/bin:$PATH"
+          ruby --version
+          ruby -ropenssl -rpsych -rzlib -rreadline -rfiddle -rsocket -e '
+            abort RUBY_PLATFORM unless RUBY_PLATFORM.include?("aarch64")
+            abort "TLS unavailable" unless OpenSSL::SSL::SSLContext.new
+            puts "Native extensions loaded successfully"
+          '
+          gem --version
+          bundle --version
+      - name: Package distribution
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          mkdir -p dist
+          name="ruby-$VERSION-linux-arm64-ubuntu26.04"
+          cp source.json "dist/$name.source.json"
+          dpkg-query -W > "dist/$name.packages.txt"
+          tar -C / -cJf "dist/$name.tar.xz" "opt/ruby/$VERSION"
+          cd dist
+          sha256sum ./*.tar.xz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ruby-${{ steps.source.outputs.version }}-linux-arm64-ubuntu26.04
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ruby-${{ needs.build.outputs.version }}-linux-arm64-ubuntu26.04
+          path: dist
+      - name: Publish release if absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          tag="ruby-$VERSION-linux-arm64-ubuntu26.04"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; keeping existing assets."
+            exit 0
+          fi
+          gh release create "$tag" dist/* --target "$GITHUB_SHA" \
+            --title "Ruby $VERSION — Linux ARM64 (Ubuntu 26.04)" \
+            --notes "Native ARM64 build. Install under /opt/ruby/$VERSION. Requires Ubuntu 26.04 ARM64 runtime libraries; see README. YJIT is disabled. Source metadata and SHA256SUMS are attached."
